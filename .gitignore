@@ -1,0 +1,36 @@
+# Python
+
+**pycache**/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+
+.venv/
+venv/
+env/
+
+# Environment variables and secrets
+
+.env
+.env.*
+
+# Model checkpoints and training artifacts
+
+checkpoints/
+outputs/
+runs/
+
+# Training datasets
+
+data/
+
+# IDE and editor settings
+
+.vscode/
+.idea/
+
+# OS files
+
+.DS_Store
+Thumbs.db
