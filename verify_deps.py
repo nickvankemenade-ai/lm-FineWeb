@@ -4,7 +4,7 @@ import torch.nn
 import torch.nn.functional
 import torch.utils.data
 import tqdm
-import tokenizer
+import tokenizers
 import time
 import pathlib
 import math
@@ -13,7 +13,6 @@ import math
 print(torch.__version__)
 print(numpy.__version__)
 print(tqdm.__version__)
-print(tokenizer.__version__)
 
 print("CUDA available:", torch.cuda.is_available())
 
