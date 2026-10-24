@@ -1,0 +1,30 @@
+# Single-A100 starting profile for the planned large training run.
+# This profile makes one sequential pass over the training split; it doesn't
+# need a fixed max_iters. With batch_size=64, grad_accum_steps=16, and
+# block_size=512, each optimizer update processes up to 524,288 tokens.
+# If the microbatch does not fit, lower batch_size and raise grad_accum_steps
+# proportionally to preserve the effective batch size.
+
+vocab_size: 32000
+block_size: 512
+n_layers: 35
+n_heads: 16
+n_embd: 1024
+dropout: 0.1
+
+batch_size: 64
+grad_accum_steps: 16
+max_iters: null
+epochs: 1
+max_lr: 0.0003
+min_lr: 0.00003
+warmup: 200
+warmup_fraction: 0.02
+weight_decay: 0.1
+eval_interval: 1000
+eval_batches: 100
+rollout_interval: 5000
+rollout_prompt: "The most important lesson I learned was"
+rollout_new_tokens: 120
+train_split: 0.99
+seed: 42

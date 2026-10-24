@@ -1,0 +1,25 @@
+# About 99M parameters, sized for an RTX 4060's 8 GB VRAM at context 512.
+# The microbatch is intentionally modest for a smooth local training run.
+
+vocab_size: 32000
+block_size: 512
+n_layers: 21
+n_heads: 8
+n_embd: 512
+dropout: 0.1
+
+batch_size: 4
+grad_accum_steps: 1
+max_iters: 200000
+max_lr: 0.0003
+min_lr: 0.00003
+warmup: 100
+warmup_fraction: 0.02
+weight_decay: 0.1
+eval_interval: 100
+eval_batches: 100
+rollout_interval: 1000
+rollout_prompt: "The most important lesson I learned was"
+rollout_new_tokens: 120
+train_split: 0.99
+seed: 42
