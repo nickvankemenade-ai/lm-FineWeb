@@ -1,5 +1,3 @@
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -71,8 +69,6 @@ class RoPE(nn.Module):
         x: torch.Tensor,
         position_offset: int = 0,
     ) -> torch.Tensor:
-        
-        
         seq_len = x.size(-2)
         end_position = position_offset + seq_len
 
@@ -166,6 +162,7 @@ class CausalSelfAttention(nn.Module):
 
         return output
 
+
 class SwiGLU(nn.Module):
 
     def __init__(
@@ -191,6 +188,7 @@ class SwiGLU(nn.Module):
         x = self.dropout(x)
 
         return x
+
 
 class TransformerBlock(nn.Module):
 
@@ -220,7 +218,6 @@ class TransformerBlock(nn.Module):
             hidden_dim=mlp_hidden_dim,
             dropout=resid_dropout,
         )
-
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.attn(self.ln_1(x))

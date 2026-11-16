@@ -22,7 +22,7 @@ def parse_args():
         "--max-new-tokens",
         type=int,
         default=512,
-        help="Maximum number of tokens to generate for each prompt (default: 200).",
+        help="Maximum number of tokens to generate for each prompt (default: 512).",
     )
     parser.add_argument(
         "--temperature",
@@ -171,6 +171,7 @@ def main():
         if args.checkpoint is not None
         else find_newest_checkpoint(project_dir)
     )
+
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
@@ -215,6 +216,8 @@ def main():
     print(f"Device: {device} | parameters: {model.count_parameters():,}")
     print("Enter a prompt to generate text, or /quit to exit.")
 
+    context_ids = []
+
     while True:
         try:
             prompt = input("\nPrompt> ")
@@ -227,8 +230,11 @@ def main():
 
         prompt_ids = tokenizer.encode(prompt).ids
         if not prompt_ids:
-            print("Please enter some text first.")
-            continue
+            if context_ids:
+                prompt_ids = context_ids
+            else:
+                print("Please enter some text first.")
+                continue
 
         printed_chars = 0
 
@@ -267,6 +273,7 @@ def main():
             skip_special_tokens=True,
         )
         print(continuation[printed_chars:])
+        context_ids.append(generated_ids[-1])
 
 
 if __name__ == "__main__":

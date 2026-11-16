@@ -3,7 +3,7 @@ Smoke test for training and checkpoint resumption using the first 10 million
 tokens from dataset/encoded/fineweb_tokens.bin.
 
 Run from the project root:
-    python smoke_resume.py
+    python -m tests.smoke_resume
 
 This uses the real token binary but only samples from its first 10M tokens.
 It does not modify the binary or your project checkpoints. Checkpoints are stored
@@ -11,12 +11,13 @@ in a temporary directory and removed automatically when the test finishes.
 """
 
 import os
+import tempfile
 import time
+
 import numpy as np
 import torch
 
 from config import Config
-from dataset import TextDataset
 from model import GPT
 from train import (
     create_grad_scaler,
@@ -187,8 +188,6 @@ def main():
     )
 
     # Save only in a temporary directory so the real project checkpoints stay safe.
-    import tempfile
-
     with tempfile.TemporaryDirectory(prefix="gpt_resume_smoke_") as temp_dir:
         latest_path = os.path.join(temp_dir, "latest.pt")
         best_path = os.path.join(temp_dir, "best.pt")

@@ -1,19 +1,16 @@
-# About 99M parameters, sized for an RTX 4060's 8 GB VRAM at context 512.
-# The microbatch is intentionally modest for a smooth local training run.
-
 vocab_size: 32000
 block_size: 512
-n_layers: 21
-n_heads: 8
-n_embd: 512
-dropout: 0.1
+n_layers: 24
+n_heads: 12
+n_embd: 768
+dropout: 0.075
 
 batch_size: 4
-grad_accum_steps: 1
-max_iters: 200000
-max_lr: 0.0003
+grad_accum_steps: 32
+max_iters: 40_000
+max_lr: 0.00015
 min_lr: 0.00003
-warmup: 100
+warmup: 0
 warmup_fraction: 0.02
 weight_decay: 0.1
 eval_interval: 100

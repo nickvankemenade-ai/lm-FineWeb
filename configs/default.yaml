@@ -1,0 +1,18 @@
+# Tiny debug profile, used when train.py runs without --rtx or --a100.
+
+vocab_size: 32000
+block_size: 512
+n_layers: 2
+n_heads: 4
+n_embd: 128
+dropout: 0.1
+
+batch_size: 4
+max_iters: 1000
+max_lr: 0.0003
+min_lr: 0.00003
+warmup: 100
+weight_decay: 0.1
+eval_interval: 100
+train_split: 0.99
+seed: 42

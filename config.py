@@ -1,23 +1,5 @@
 from dataclasses import dataclass
 
-VOCAB_SIZE = 32000
-BLOCK_SIZE = 512
-N_LAYERS = 2
-N_HEADS = 4
-N_EMBD = 128
-DROPOUT = 0.1
-
-
-BATCH_SIZE = 4
-MAX_ITERS = 1000
-MAX_LR = 3e-4
-MIN_LR = 3e-5
-WARMUP = 100
-WEIGHT_DECAY = 0.1
-EVAL_INTERVAL = 100
-TRAIN_SPLIT = 0.99
-SEED = 42
-
 
 @dataclass
 class Config:

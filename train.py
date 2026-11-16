@@ -1,42 +1,27 @@
-import math
+import argparse
 import json
+import math
+import os
 import random
+import tempfile
+import textwrap
+import time
 from contextlib import nullcontext
+from itertools import islice
+from pathlib import Path
 
 import numpy as np
 import torch
+import yaml
 
-import os
-import time
-import tempfile
-
-import argparse
-from pathlib import Path
-from itertools import islice
+from config import Config
+from dataset import TextDataset
+from generate import generate_tokens
+from model import GPT
 
 CHECKPOINT_DIR = "checkpoints"
+CONFIG_DIR = Path(__file__).resolve().parent / "configs"
 
-from config import (
-    Config,
-    VOCAB_SIZE,
-    BLOCK_SIZE,
-    N_LAYERS,
-    N_HEADS,
-    N_EMBD,
-    DROPOUT,
-    BATCH_SIZE,
-    MAX_ITERS,
-    MAX_LR,
-    MIN_LR,
-    WARMUP,
-    WEIGHT_DECAY,
-    EVAL_INTERVAL,
-    TRAIN_SPLIT,
-    SEED,
-)
-from dataset import TextDataset
-from model import GPT
-from generate import generate_tokens
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train the GPT language model.")
@@ -44,12 +29,12 @@ def parse_args():
     profile_group.add_argument(
         "--a100",
         action="store_true",
-        help="Load model and training settings from a100.yaml.",
+        help="Load model and training settings from configs/a100.yaml.",
     )
     profile_group.add_argument(
         "--rtx",
         action="store_true",
-        help="Load model and training settings from rtx.yaml.",
+        help="Load model and training settings from configs/rtx.yaml.",
     )
     parser.add_argument(
         "--resume",
@@ -61,55 +46,31 @@ def parse_args():
         action="store_true",
         help="Compile the model with torch.compile for faster CUDA training.",
     )
+    parser.add_argument(
+        "--compile-backend",
+        choices=("auto", "inductor", "cudagraphs"),
+        default="auto",
+        help="Compiler backend; auto selects CUDA graphs when Triton is unavailable.",
+    )
     return parser.parse_args()
 
+
 def create_config(profile: str | None = None) -> Config:
-    if profile is not None:
-        if profile not in {"a100", "rtx"}:
-            raise ValueError(f"Unknown configuration profile: {profile}")
+    name = profile or "default"
+    config_path = CONFIG_DIR / f"{name}.yaml"
+    if not config_path.is_file():
+        raise ValueError(f"Unknown configuration profile: {name}")
 
-        config_path = Path(__file__).resolve().with_name(f"{profile}.yaml")
-        try:
-            import yaml
-        except ImportError as error:
-            raise RuntimeError(
-                "Loading a YAML profile requires PyYAML. Install it with "
-                "'pip install pyyaml'."
-            ) from error
+    with config_path.open("r", encoding="utf-8") as config_file:
+        settings = yaml.safe_load(config_file)
 
-        with config_path.open("r", encoding="utf-8") as config_file:
-            settings = yaml.safe_load(config_file)
+    if not isinstance(settings, dict):
+        raise ValueError(f"Expected a mapping of settings in {config_path}.")
 
-        if not isinstance(settings, dict):
-            raise ValueError(f"Expected a mapping of settings in {config_path}.")
-
-        try:
-            return Config(**settings)
-        except TypeError as error:
-            raise ValueError(
-                f"Invalid settings in {config_path}: {error}"
-            ) from error
-
-    return Config(
-        # Model
-        vocab_size=VOCAB_SIZE,
-        block_size=BLOCK_SIZE,
-        n_layers=N_LAYERS,
-        n_heads=N_HEADS,
-        n_embd=N_EMBD,
-        dropout=DROPOUT,
-
-        # Training
-        batch_size=BATCH_SIZE,
-        max_iters=MAX_ITERS,
-        max_lr=MAX_LR,
-        min_lr=MIN_LR,
-        warmup=WARMUP,
-        weight_decay=WEIGHT_DECAY,
-        eval_interval=EVAL_INTERVAL,
-        train_split=TRAIN_SPLIT,
-        seed=SEED,
-    )
+    try:
+        return Config(**settings)
+    except TypeError as error:
+        raise ValueError(f"Invalid settings in {config_path}: {error}") from error
 
 
 def set_seed(seed: int) -> None:
@@ -127,6 +88,7 @@ def get_device() -> torch.device:
 
     return torch.device("cpu")
 
+
 def create_grad_scaler(device: torch.device, amp_dtype):
     use_scaler = (
         device.type == "cuda"
@@ -137,6 +99,7 @@ def create_grad_scaler(device: torch.device, amp_dtype):
         "cuda",
         enabled=use_scaler,
     )
+
 
 def get_autocast_dtype(device: torch.device):
     if device.type != "cuda":
@@ -156,6 +119,7 @@ def autocast_context(device: torch.device, dtype):
         )
 
     return nullcontext()
+
 
 def get_lr(
     iteration: int,
@@ -224,6 +188,7 @@ def create_optimizer(
         )
 
     return optimizer
+
 
 def train_step(
     model: GPT,
@@ -305,7 +270,10 @@ def train_step(
         return total_loss, float(grad_norm.detach().item())
     return total_loss
 
+
 @torch.no_grad()
+
+
 def estimate_loss(
     model: GPT,
     dataset: TextDataset,
@@ -347,6 +315,7 @@ def estimate_loss(
         model.train(was_training)
 
     return results
+
 
 def save_checkpoint(
     model,
@@ -395,6 +364,7 @@ def save_checkpoint(
     finally:
         if os.path.exists(temporary_path):
             os.remove(temporary_path)
+
 
 def load_checkpoint(
     checkpoint_path,
@@ -452,6 +422,37 @@ def load_checkpoint(
     print(f"Best validation loss so far: {best_val_loss:.4f}")
 
     return start_iteration, best_val_loss
+
+
+def format_training_log(record: dict) -> str:
+    grad_norm = record["last_update_grad_norm_pre_clip"]
+    last_loss = record["last_update_loss"]
+    throughput = record["tokens_per_second_since_log"]
+    progress = 100.0 * record["progress"]
+    last_loss_text = f"{last_loss:.4f}" if last_loss is not None else "n/a"
+    grad_norm_text = f"{grad_norm:.3f}" if grad_norm is not None else "n/a"
+    throughput_text = f"{throughput:,.0f} tok/s" if throughput is not None else "n/a"
+    return (
+        f"\n{'─' * 76}\n"
+        f" STEP {record['step']:,}/{record['total_steps']:,}  ({progress:5.1f}%)"
+        f"                         elapsed {record['elapsed_seconds'] / 3600:.2f} h\n"
+        f" Loss     train {record['train_loss_sampled']:.4f}"
+        f"   val {record['validation_loss']:.4f}"
+        f"   last batch {last_loss_text}\n"
+        f" Update   lr {record['learning_rate']:.2e}"
+        f"   grad norm {grad_norm_text}"
+        f"   throughput {throughput_text}\n"
+        f" Data     {record['tokens_processed']:,} tokens seen"
+        f"   {record['tokens_per_update']:,} tokens/update"
+        f"   eval {record['eval_batches_per_split']} batches/split\n"
+        f"{'─' * 76}"
+    )
+
+
+def write_metric_record(metrics_file, record: dict) -> None:
+    metrics_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+    metrics_file.flush()
+
 
 def main() -> None:
     args = parse_args()
@@ -538,6 +539,7 @@ def main() -> None:
             return
 
     execution_model = model
+    compile_backend = None
     if args.compile:
         if not hasattr(torch, "compile"):
             raise RuntimeError(
@@ -546,8 +548,23 @@ def main() -> None:
         if device.type != "cuda":
             raise RuntimeError("--compile is currently supported for CUDA runs only.")
 
-        print("Compiling model with torch.compile (initial steps will be slower)...")
-        execution_model = torch.compile(model)
+        compile_backend = args.compile_backend
+        if compile_backend == "auto":
+            try:
+                import triton  # noqa: F401
+            except ImportError:
+                compile_backend = "cudagraphs"
+                print(
+                    "Triton is unavailable; selecting PyTorch's cudagraphs "
+                    "backend instead of Inductor."
+                )
+            else:
+                compile_backend = "inductor"
+        print(
+            f"Compiling model with torch.compile backend={compile_backend} "
+            "(initial steps will be slower)..."
+        )
+        execution_model = torch.compile(model, backend=compile_backend)
 
     print("TRAINING STARTED")
     print(f"Device:               {device}")
@@ -573,19 +590,20 @@ def main() -> None:
     print(f"Warmup fraction:      {config.warmup_fraction:.2%}")
     print(f"Weight decay:         {config.weight_decay}")
     print(f"Model parameters:     {model.count_parameters():,}")
-    print(f"Torch compilation:    {'Enabled' if args.compile else 'Disabled'}")
+    compile_label = f"Enabled ({compile_backend})" if args.compile else "Disabled"
+    print(f"Torch compilation:    {compile_label}")
     print(f"Gradient scaler:      {scaler.is_enabled()}")
-    profile_label = f"{profile.upper()} ({profile}.yaml)" if profile else "default"
+    profile_label = f"{profile or 'default'} (configs/{profile or 'default'}.yaml)"
     print(f"Configuration profile: {profile_label}")
     print(f"Checkpoint directory: {checkpoint_dir}")
 
     print("\nBeginning optimization...\n")
 
     training_start_time = time.time()
+    metrics_file = open(metrics_path, "a", encoding="utf-8", buffering=1)
     last_log_time = training_start_time
     last_train_loss = None
     last_grad_norm = None
-    tokens_per_update = config.batch_size * config.grad_accum_steps * config.block_size
 
     def iter_update_batches():
         if not epoch_mode:
@@ -613,13 +631,34 @@ def main() -> None:
         )
 
         if should_evaluate:
-            losses = estimate_loss(
-                model=execution_model,
-                dataset=dataset,
-                config=config,
-                device=device,
-                amp_dtype=amp_dtype,
-            )
+            try:
+                losses = estimate_loss(
+                    model=execution_model,
+                    dataset=dataset,
+                    config=config,
+                    device=device,
+                    amp_dtype=amp_dtype,
+                )
+            except Exception as error:
+                if (
+                    compile_backend != "inductor"
+                    or "Cannot find a working triton installation" not in str(error)
+                ):
+                    raise
+                print(
+                    "Inductor could not initialize Triton; retrying this "
+                    "evaluation with the cudagraphs backend."
+                )
+                torch._dynamo.reset()
+                compile_backend = "cudagraphs"
+                execution_model = torch.compile(model, backend=compile_backend)
+                losses = estimate_loss(
+                    model=execution_model,
+                    dataset=dataset,
+                    config=config,
+                    device=device,
+                    amp_dtype=amp_dtype,
+                )
 
             current_time = time.time()
             elapsed = current_time - last_log_time
@@ -627,6 +666,7 @@ def main() -> None:
 
             lr_for_step = get_lr(iteration, config, total_iters=total_iters)
             record = {
+                "record_type": "evaluation",
                 "step": iteration,
                 "total_steps": total_iters,
                 "progress": iteration / total_iters,
@@ -637,7 +677,7 @@ def main() -> None:
                 "last_update_grad_norm_pre_clip": last_grad_norm,
                 "tokens_processed": iteration * tokens_per_update,
                 "tokens_per_update": tokens_per_update,
-                "effective_batch_sequences": config.batch_size * config.grad_accum_steps,
+                "effective_batch_sequences": effective_batch_size,
                 "elapsed_seconds": total_elapsed,
                 "seconds_since_log": elapsed,
                 "tokens_per_second_since_log": (
@@ -647,9 +687,8 @@ def main() -> None:
                 ),
                 "eval_batches_per_split": config.eval_batches,
             }
-            with open(metrics_path, "a", encoding="utf-8") as metrics_file:
-                metrics_file.write(json.dumps(record, ensure_ascii=False) + "\n")
-            print("LOG " + json.dumps(record, ensure_ascii=False))
+            write_metric_record(metrics_file, record)
+            print(format_training_log(record), flush=True)
 
             if iteration > 0 and iteration % config.rollout_interval == 0:
                 previous_mode = model.training
@@ -675,7 +714,14 @@ def main() -> None:
                 }
                 with open(rollouts_path, "a", encoding="utf-8") as rollout_file:
                     rollout_file.write(json.dumps(rollout, ensure_ascii=False) + "\n")
-                print("ROLLOUT " + json.dumps(rollout, ensure_ascii=False))
+                print(
+                    f"\n{'─' * 76}\n"
+                    f" ROLLOUT SNAPSHOT  |  step {iteration:,}\n"
+                    f" Prompt: {config.rollout_prompt}\n\n"
+                    f"{textwrap.fill(rollout['continuation'], width=76, initial_indent=' ', subsequent_indent=' ')}\n"
+                    f"{'─' * 76}",
+                    flush=True,
+                )
 
             last_log_time = current_time
 
@@ -707,6 +753,8 @@ def main() -> None:
                 scaler=scaler,
             )
 
+        step_started_at = time.perf_counter()
+        update_tokens = tokens_per_update
         microbatch_weights = None
         if batch_group is None:
             def get_train_batch():
@@ -729,6 +777,7 @@ def main() -> None:
                 for starts, seq_len in batch_group
             ]
             total_target_tokens = sum(target_token_counts)
+            update_tokens = total_target_tokens
             microbatch_weights = [
                 token_count / total_target_tokens
                 for token_count in target_token_counts
@@ -770,6 +819,23 @@ def main() -> None:
                 f"{train_loss}"
             )
 
+        update_seconds = max(time.perf_counter() - step_started_at, 1e-9)
+        write_metric_record(metrics_file, {
+            "record_type": "update",
+            "step": iteration + 1,
+            "total_steps": total_iters,
+            "progress": (iteration + 1) / total_iters,
+            "learning_rate": learning_rate,
+            "train_loss": train_loss,
+            "grad_norm_pre_clip": grad_norm,
+            "tokens_processed": (iteration + 1) * tokens_per_update,
+            "tokens_this_update": update_tokens,
+            "tokens_per_update": tokens_per_update,
+            "tokens_per_second": update_tokens / update_seconds,
+            "update_seconds": update_seconds,
+        })
+
+    metrics_file.close()
     final_iteration = total_iters
 
     save_checkpoint(
