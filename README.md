@@ -1,4 +1,4 @@
-# lm
+# lm-FineWeb
 
 A decoder-only GPT language model trained from scratch on a filtered
 [FineWeb](https://huggingface.co/datasets/HuggingFaceFW/fineweb) corpus with a custom byte-level
